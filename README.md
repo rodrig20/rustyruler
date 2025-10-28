@@ -19,7 +19,7 @@ A lightweight and efficient ruler tool built with Rust and GTK4. Rustyruler help
 
 ## Prerequisites
 
-- [Rust](https://www.rust-lang.org/tools/install) (edition 2024)
+- [Rust](https://www.rust-lang.org/tools/install)
 - On Wayland: `grim` (screenshot utility)
 - On X11: You may need to install additional Wayland compatibility libraries
 
