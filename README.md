@@ -25,6 +25,14 @@ A lightweight and efficient ruler tool built with Rust and GTK4. Rustyruler help
 
 ## Installation
 
+For Arch-based distros, you can use the provided PKGBUILD:
+
+```bash
+makepkg -si
+```
+
+Alternatively, you can build from source:
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/rodrig20/rustyruler.git
