@@ -135,14 +135,20 @@ fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
     cr.set_source_rgb(1.0, 0.0, 0.0);
     cr.set_line_width(1.0 / scale);
 
+    let lower_x = if data.x < 4 {
+        0
+    } else {
+        data.x - 4
+    };
+
     // Draw vertical line above the crosshair center
     cr.move_to(data.x as f64, data.y as f64);
     cr.line_to(data.x as f64, data.top_limit as f64);
     let _ = cr.stroke();
-    cr.move_to((data.x - 4) as f64, data.top_limit as f64);
+    cr.move_to((lower_x) as f64, data.top_limit as f64);
     cr.line_to((data.x + 4) as f64, data.top_limit as f64);
     let _ = cr.stroke();
-    cr.move_to((data.x - 4) as f64, (data.top_limit - 1) as f64);
+    cr.move_to((lower_x) as f64, (data.top_limit - 1) as f64);
     cr.line_to((data.x + 4) as f64, (data.top_limit - 1) as f64);
     let _ = cr.stroke();
 
@@ -150,21 +156,27 @@ fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
     cr.move_to(data.x as f64, data.y as f64);
     cr.line_to(data.x as f64, data.bottom_limit as f64);
     let _ = cr.stroke();
-    cr.move_to((data.x - 4) as f64, data.bottom_limit as f64);
+    cr.move_to((lower_x) as f64, data.bottom_limit as f64);
     cr.line_to((data.x + 4) as f64, data.bottom_limit as f64);
     let _ = cr.stroke();
-    cr.move_to((data.x - 4) as f64, (data.bottom_limit - 1) as f64);
+    cr.move_to((lower_x) as f64, (data.bottom_limit - 1) as f64);
     cr.line_to((data.x + 4) as f64, (data.bottom_limit - 1) as f64);
     let _ = cr.stroke();
+
+    let lower_y = if data.y < 4 {
+        0
+    } else {
+        data.y - 4
+    };
 
     // Draw horizontal line to the left of crosshair center
     cr.move_to(data.x as f64, data.y as f64);
     cr.line_to(data.left_limit as f64, data.y as f64);
     let _ = cr.stroke();
-    cr.move_to(data.left_limit as f64, (data.y - 4) as f64);
+    cr.move_to(data.left_limit as f64, (lower_y) as f64);
     cr.line_to(data.left_limit as f64, (data.y + 4) as f64);
     let _ = cr.stroke();
-    cr.move_to((data.left_limit - 1) as f64, (data.y - 4) as f64);
+    cr.move_to((data.left_limit - 1) as f64, (lower_y) as f64);
     cr.line_to((data.left_limit - 1) as f64, (data.y + 4) as f64);
     let _ = cr.stroke();
 
@@ -172,10 +184,10 @@ fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
     cr.move_to(data.x as f64, data.y as f64);
     cr.line_to(data.right_limit as f64, data.y as f64);
     let _ = cr.stroke();
-    cr.move_to(data.right_limit as f64, (data.y - 4) as f64);
+    cr.move_to(data.right_limit as f64, (lower_y) as f64);
     cr.line_to(data.right_limit as f64, (data.y + 4) as f64);
     let _ = cr.stroke();
-    cr.move_to((data.right_limit - 1) as f64, (data.y - 4) as f64);
+    cr.move_to((data.right_limit - 1) as f64, (lower_y) as f64);
     cr.line_to((data.right_limit - 1) as f64, (data.y + 4) as f64);
     let _ = cr.stroke();
 
