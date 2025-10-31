@@ -1,10 +1,13 @@
 use crate::screenshot;
 use glib::Propagation;
 use gtk4::{
-    Application, ApplicationWindow, DrawingArea, EventControllerKey, EventControllerMotion, cairo,
-    gdk::Key, gdk_pixbuf::Pixbuf, prelude::*,
+    Application, ApplicationWindow, Box, CssProvider, DrawingArea, EventControllerKey,
+    EventControllerMotion, Overlay, cairo,
+    gdk::{Display, Key},
+    gdk_pixbuf::Pixbuf,
+    prelude::*,
 };
-use gtk4_layer_shell::{KeyboardMode, Layer, LayerShell};
+use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -21,7 +24,6 @@ struct CrosshairData {
 }
 
 pub fn build_ui(app: &Application) {
-    // Capture the original screenshot for the background
     let original_screenshot_path: PathBuf = match screenshot::capture_original_screenshot() {
         Ok(path) => path,
         Err(err) => {
@@ -30,19 +32,21 @@ pub fn build_ui(app: &Application) {
         }
     };
 
-    // Create and configure the main application window
     let window = create_and_configure_window(app);
 
-    // Keep a reference to the screenshot path for cleanup
+    let provider = CssProvider::new();
+    provider.load_from_path("assets/style.css");
+    gtk4::style_context_add_provider_for_display(
+        &Display::default().expect("Could not connect to a display."),
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
     let screenshot_path_for_cleanup = original_screenshot_path.clone();
-
-    // Load image data
     let (rgb_image, pixbuf) = load_image_data(&original_screenshot_path);
-
     let img_width = pixbuf.width() as u32;
     let img_height = pixbuf.height() as u32;
 
-    // Initialize crosshair data structure
     let crosshair_data = Rc::new(RefCell::new(CrosshairData {
         x: 0,
         y: 0,
@@ -53,19 +57,24 @@ pub fn build_ui(app: &Application) {
         initialized: false,
     }));
 
-    // Store scale and offset information for coordinate transformations (shared between drawing and mouse events)
     let scale_and_offset = Rc::new(RefCell::new((1.0_f64, 0.0_f64, 0.0_f64)));
+    // Track the currently selected tool: 0 = cross, 1 = line, 2 = rotated line
+    let active_tool = Rc::new(RefCell::new(0));
 
-    // Create drawing area and set up drawing function
     let drawing_area = create_drawing_area(
         &pixbuf,
         img_width,
         img_height,
         crosshair_data.clone(),
         scale_and_offset.clone(),
+        active_tool.clone(),
     );
 
-    // Set up keyboard and mouse event handling
+    let command_center = create_command_center(active_tool.clone());
+    let overlay = Overlay::builder().child(&drawing_area).build();
+    overlay.add_overlay(&command_center);
+    command_center.set_visible(false);
+
     setup_event_handlers(
         &window,
         &drawing_area,
@@ -73,19 +82,221 @@ pub fn build_ui(app: &Application) {
         rgb_image.clone(),
         original_screenshot_path.clone(),
         scale_and_offset,
+        &command_center,
+        active_tool,
     );
 
-    // Set up cleanup when window closes
     setup_cleanup(&window, screenshot_path_for_cleanup);
 
-    // Present the window
-    window.set_child(Some(&drawing_area));
+    window.set_child(Some(&overlay));
     window.grab_focus();
     window.fullscreen();
     window.present();
 }
 
-/// Creates and configures the main application window
+/// Draws a custom command center with straight top/bottom edges and inward-curved sides
+fn draw_command_center(
+    cr: &cairo::Context,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    curve_depth: f64, // How much the sides curve inward
+    scale: f64,
+    fill_color: (f64, f64, f64, f64),
+    border_color: (f64, f64, f64),
+    border_width: f64,
+) {
+    // Create a shape with straight top/bottom and curved sides
+    cr.new_sub_path();
+
+    // Start at top-left
+    cr.move_to(x, y);
+
+    // Top edge - straight line
+    cr.line_to(x + width, y);
+
+    // Right edge with inward curve
+    cr.curve_to(
+        x + width - curve_depth * 1.8,
+        y + height * 0.35,
+        x + width * 0.95 - curve_depth * 0.2,
+        y + height * 0.9,
+        x + width * 0.9,
+        y + height,
+    );
+
+    // Bottom edge - straight line
+    cr.line_to(x + width * 0.1, y + height);
+
+    // Left edge with inward curve (to close the shape)
+    cr.curve_to(
+        x + width * 0.05 + curve_depth * 0.2,
+        y + height * 0.9, // control point 1
+        x + curve_depth * 1.8,
+        y + height * 0.35, // control point 2
+        x,
+        y, // end point (back to start)
+    );
+
+    cr.close_path();
+
+    // Fill with specified color
+    cr.set_source_rgba(fill_color.0, fill_color.1, fill_color.2, fill_color.3);
+    cr.fill_preserve().unwrap();
+
+    // Draw border with specified color and width
+    cr.set_source_rgb(border_color.0, border_color.1, border_color.2);
+    cr.set_line_width(border_width / scale);
+    cr.stroke().unwrap();
+}
+
+fn create_command_center(active_tool: Rc<RefCell<i32>>) -> Box {
+    // Create a container box for the command center
+    let command_center_box = Box::builder()
+        .css_classes(vec!["command-center-outer"])
+        .halign(gtk4::Align::Center)
+        .valign(gtk4::Align::Start)
+        .margin_top(0) // Remove top margin to eliminate gap
+        .margin_bottom(5) // Reduced margin
+        .width_request(200) // Better width for square buttons
+        .height_request(60) // Adjusted for square buttons
+        .build();
+
+    // Create a drawing area to draw the rounded background
+    let background_drawing_area = DrawingArea::new();
+    background_drawing_area.set_hexpand(true);
+    background_drawing_area.set_vexpand(true);
+    background_drawing_area.set_size_request(200, 60); // Adjusted size
+
+    // Create image toggle buttons
+    let image1 = gtk4::Image::from_file("assets/cross.png");
+    image1.set_pixel_size(16); // Reduced image size to fit with less padding
+    let button1 = gtk4::ToggleButton::new();
+    button1.set_child(Some(&image1));
+
+    let image2 = gtk4::Image::from_file("assets/line.png");
+    image2.set_pixel_size(16); // Reduced image size to fit with less padding
+    let button2 = gtk4::ToggleButton::new();
+    button2.set_child(Some(&image2));
+
+    // For the third button, we'll create a 90-degree rotated version of the line.png
+    // by using the image crate to rotate the image data and then create a GDK texture
+    let rotated_texture = {
+        // Load the original image using the image crate
+        let original_img = image::open("assets/line.png").expect("Failed to load line.png");
+        let rotated_img = original_img.rotate90(); // Rotate 90 degrees clockwise
+
+        // Get RGBA data from the rotated image
+        let rgba = rotated_img.to_rgba8();
+        let width = rgba.width();
+        let height = rgba.height();
+        let raw_data = rgba.as_raw();
+
+        // Create a GDK memory texture from the RGBA data
+        gtk4::gdk::MemoryTexture::new(
+            width as i32,
+            height as i32,
+            gtk4::gdk::MemoryFormat::R8g8b8a8,
+            &glib::Bytes::from(raw_data),
+            width as usize * 4,
+        )
+    };
+
+    let image3 = gtk4::Image::from_paintable(Some(&rotated_texture));
+    image3.set_pixel_size(16); // Reduced image size to fit with less padding
+    let button3 = gtk4::ToggleButton::new();
+    button3.set_child(Some(&image3));
+
+    // Make buttons behave like radio buttons (only one selected at a time)
+    // Connect signals to ensure only one button is active at a time and track the active tool
+    button1.connect_toggled({
+        let button2_clone = button2.clone();
+        let button3_clone = button3.clone();
+        let active_tool_clone = active_tool.clone();
+        move |btn| {
+            if btn.is_active() {
+                button2_clone.set_active(false);
+                button3_clone.set_active(false);
+                *active_tool_clone.borrow_mut() = 0;
+            }
+        }
+    });
+
+    button2.connect_toggled({
+        let button1_clone = button1.clone();
+        let button3_clone = button3.clone();
+        let active_tool_clone = active_tool.clone();
+        move |btn| {
+            if btn.is_active() {
+                button1_clone.set_active(false);
+                button3_clone.set_active(false);
+                *active_tool_clone.borrow_mut() = 1;
+            }
+        }
+    });
+
+    button3.connect_toggled({
+        let button1_clone = button1.clone();
+        let button2_clone = button2.clone();
+        let active_tool_clone = active_tool.clone();
+        move |btn| {
+            if btn.is_active() {
+                button1_clone.set_active(false);
+                button2_clone.set_active(false);
+                *active_tool_clone.borrow_mut() = 2;
+            }
+        }
+    });
+
+    // Set the first button (cross tool) as active by default
+    button1.set_active(true);
+
+    // Apply basic styling to toggle buttons to make them look good over the rounded background
+    button1.set_can_focus(true);
+    button2.set_can_focus(true);
+    button3.set_can_focus(true);
+
+    // Create an overlay to position the buttons over the background
+    let overlay = Overlay::new();
+    overlay.set_child(Some(&background_drawing_area));
+
+    // Position the buttons using fixed layout
+    let button_container = Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(20) // Adjusted spacing for square buttons
+        .halign(gtk4::Align::Center)
+        .valign(gtk4::Align::Center)
+        .build();
+
+    button_container.append(&button1);
+    button_container.append(&button2);
+    button_container.append(&button3);
+
+    overlay.add_overlay(&button_container);
+
+    // Set up the drawing function for the background
+    background_drawing_area.set_draw_func(move |_, cr, width, height| {
+        // Draw the rounded command center background with rounded bottom
+        draw_command_center(
+            cr,
+            0.0,                     // x position
+            0.0,                     // y position
+            width as f64,            // width
+            height as f64,           // height
+            10.0,                    // smaller curve depth for more subtle shape
+            1.0,                     // scale (since this is already scaled by GTK)
+            (0.08, 0.08, 0.08, 0.8), // fill color (more opaque black)
+            (0.3, 0.3, 0.3),         // border color (light gray)
+            2.0,                     // thinner border
+        );
+    });
+
+    command_center_box.append(&overlay);
+
+    command_center_box
+}
+
 fn create_and_configure_window(app: &Application) -> ApplicationWindow {
     let window = ApplicationWindow::builder()
         .application(app)
@@ -93,14 +304,13 @@ fn create_and_configure_window(app: &Application) -> ApplicationWindow {
         .can_focus(true)
         .build();
 
-    // Configure the window as a layer shell overlay
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
     window.set_keyboard_mode(KeyboardMode::Exclusive);
-    window.set_anchor(gtk4_layer_shell::Edge::Left, true);
-    window.set_anchor(gtk4_layer_shell::Edge::Right, true);
-    window.set_anchor(gtk4_layer_shell::Edge::Top, true);
-    window.set_anchor(gtk4_layer_shell::Edge::Bottom, true);
+    window.set_anchor(Edge::Left, true);
+    window.set_anchor(Edge::Right, true);
+    window.set_anchor(Edge::Top, true);
+    window.set_anchor(Edge::Bottom, true);
     window.set_exclusive_zone(-1);
 
     window
@@ -130,81 +340,81 @@ fn load_image_data(original_screenshot_path: &PathBuf) -> (Rc<image::RgbImage>, 
 }
 
 /// Draws the crosshair lines at the current position
-fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
+/// Draws the crosshair lines at the current position based on the active tool
+/// - Tool 0 (Cross): Draws full crosshair (both vertical and horizontal lines)
+/// - Tool 1 (Horizontal line): Draws only horizontal line
+/// - Tool 2 (Vertical line): Draws only vertical line
+fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64, active_tool: i32) {
     // Set crosshair color to red and line width
+
     cr.set_source_rgb(1.0, 0.0, 0.0);
     cr.set_line_width(1.0 / scale);
 
-    let lower_x = if data.x < 4 {
-        0
-    } else {
-        data.x - 4
-    };
-    let upper_x = data.x + 4;
+    if active_tool == 0 || active_tool == 2 {
+        let lower_x = data.x.saturating_sub(4);
+        let upper_x = data.x + 4;
 
-    // Draw vertical line above the crosshair center
-    cr.move_to(data.x as f64, data.y as f64);
-    cr.line_to(data.x as f64, data.top_limit as f64);
-    let _ = cr.stroke();
-    cr.move_to((lower_x) as f64, data.top_limit as f64);
-    cr.line_to((upper_x) as f64, data.top_limit as f64);
-    let _ = cr.stroke();
-    cr.move_to((lower_x) as f64, (data.top_limit + 1) as f64);
-    cr.line_to((upper_x) as f64, (data.top_limit + 1) as f64);
-    let _ = cr.stroke();
+        // Draw vertical line above the crosshair center
+        cr.move_to(data.x as f64, data.y as f64);
+        cr.line_to(data.x as f64, data.top_limit as f64);
+        let _ = cr.stroke();
+        cr.move_to((lower_x) as f64, data.top_limit as f64);
+        cr.line_to((upper_x) as f64, data.top_limit as f64);
+        let _ = cr.stroke();
+        cr.move_to((lower_x) as f64, (data.top_limit + 1) as f64);
+        cr.line_to((upper_x) as f64, (data.top_limit + 1) as f64);
+        let _ = cr.stroke();
 
-    // Draw vertical line below the crosshair center
-    cr.move_to(data.x as f64, data.y as f64);
-    cr.line_to(data.x as f64, data.bottom_limit as f64);
-    let _ = cr.stroke();
-    cr.move_to((lower_x) as f64, data.bottom_limit as f64);
-    cr.line_to((upper_x) as f64, data.bottom_limit as f64);
-    let _ = cr.stroke();
-    cr.move_to((lower_x) as f64, (data.bottom_limit - 1) as f64);
-    cr.line_to((upper_x) as f64, (data.bottom_limit - 1) as f64);
-    let _ = cr.stroke();
+        // Draw vertical line below the crosshair center
+        cr.move_to(data.x as f64, data.y as f64);
+        cr.line_to(data.x as f64, data.bottom_limit as f64);
+        let _ = cr.stroke();
+        cr.move_to((lower_x) as f64, data.bottom_limit as f64);
+        cr.line_to((upper_x) as f64, data.bottom_limit as f64);
+        let _ = cr.stroke();
+        cr.move_to((lower_x) as f64, (data.bottom_limit - 1) as f64);
+        cr.line_to((upper_x) as f64, (data.bottom_limit - 1) as f64);
+        let _ = cr.stroke();
+    }
+    if active_tool == 0 || active_tool == 1 {
+        let lower_y = data.y.saturating_sub(4);
+        let upper_y = data.y + 4;
 
-    let lower_y = if data.y < 4 {
-        0
-    } else {
-        data.y - 4
-    };
-    let upper_y = data.y + 4;
+        // Draw horizontal line to the left of crosshair center
+        cr.move_to(data.x as f64, data.y as f64);
+        cr.line_to(data.left_limit as f64, data.y as f64);
+        let _ = cr.stroke();
+        cr.move_to(data.left_limit as f64, (lower_y) as f64);
+        cr.line_to(data.left_limit as f64, (upper_y) as f64);
+        let _ = cr.stroke();
+        cr.move_to((data.left_limit + 1) as f64, (lower_y) as f64);
+        cr.line_to((data.left_limit + 1) as f64, (upper_y) as f64);
+        let _ = cr.stroke();
 
-    // Draw horizontal line to the left of crosshair center
-    cr.move_to(data.x as f64, data.y as f64);
-    cr.line_to(data.left_limit as f64, data.y as f64);
-    let _ = cr.stroke();
-    cr.move_to(data.left_limit as f64, (lower_y) as f64);
-    cr.line_to(data.left_limit as f64, (upper_y) as f64);
-    let _ = cr.stroke();
-    cr.move_to((data.left_limit + 1) as f64, (lower_y) as f64);
-    cr.line_to((data.left_limit + 1) as f64, (upper_y) as f64);
-    let _ = cr.stroke();
+        // Draw horizontal line to the right of crosshair center
+        cr.move_to(data.x as f64, data.y as f64);
+        cr.line_to(data.right_limit as f64, data.y as f64);
+        let _ = cr.stroke();
+        cr.move_to(data.right_limit as f64, (lower_y) as f64);
+        cr.line_to(data.right_limit as f64, (upper_y) as f64);
+        let _ = cr.stroke();
+        cr.move_to((data.right_limit - 1) as f64, (lower_y) as f64);
+        cr.line_to((data.right_limit - 1) as f64, (upper_y) as f64);
+        let _ = cr.stroke();
 
-    // Draw horizontal line to the right of crosshair center
-    cr.move_to(data.x as f64, data.y as f64);
-    cr.line_to(data.right_limit as f64, data.y as f64);
-    let _ = cr.stroke();
-    cr.move_to(data.right_limit as f64, (lower_y) as f64);
-    cr.line_to(data.right_limit as f64, (upper_y) as f64);
-    let _ = cr.stroke();
-    cr.move_to((data.right_limit - 1) as f64, (lower_y) as f64);
-    cr.line_to((data.right_limit - 1) as f64, (upper_y) as f64);
-    let _ = cr.stroke();
-
-    // Draw center point of the crosshair
-    cr.arc(
-        data.x as f64,
-        data.y as f64,
-        3.0 / scale,
-        0.0,
-        2.0 * std::f64::consts::PI,
-    );
-    cr.fill().unwrap();
+        // Draw center point of the crosshair
+        cr.arc(
+            data.x as f64,
+            data.y as f64,
+            3.0 / scale,
+            0.0,
+            2.0 * std::f64::consts::PI,
+        );
+        cr.fill().unwrap();
+    }
 }
 
-/// Draws the tooltip with dimensions at the current position
+/// Draws the tooltip with dimensions at the current position based on the active tool
 fn draw_tooltip(
     cr: &cairo::Context,
     data: &CrosshairData,
@@ -212,14 +422,23 @@ fn draw_tooltip(
     scale_and_offset: &RefCell<(f64, f64, f64)>,
     img_width: u32,
     img_height: u32,
+    active_tool: i32,
 ) {
     // Draw text showing the dimensions of the current selection
     cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(20.0 / scale);
-
-    let x_size = &data.right_limit - &data.left_limit + 1;
-    let y_size = &data.bottom_limit - &data.top_limit + 1;
-    let coords = format!("{} × {}", x_size, y_size);
+    let coords;
+    if active_tool == 0 {
+        let x_size = data.right_limit - data.left_limit + 1;
+        let y_size = data.bottom_limit - data.top_limit + 1;
+        coords = format!("{x_size} × {y_size}");
+    } else if active_tool == 1 {
+        let x_size = data.right_limit - data.left_limit + 1;
+        coords = format!("{x_size}");
+    } else {
+        let y_size = data.bottom_limit - data.top_limit + 1;
+        coords = format!("{y_size}");
+    }
 
     // Get text dimensions for background calculation
     let text_extents = cr.text_extents(&coords).unwrap();
@@ -320,6 +539,7 @@ fn create_drawing_area(
     img_height: u32,
     crosshair_data: Rc<RefCell<CrosshairData>>,
     scale_and_offset: Rc<RefCell<(f64, f64, f64)>>,
+    active_tool: Rc<RefCell<i32>>,
 ) -> DrawingArea {
     let drawing_area = DrawingArea::new();
     drawing_area.set_hexpand(true);
@@ -329,6 +549,7 @@ fn create_drawing_area(
     let pixbuf_clone = pixbuf.clone();
     let crosshair_data_clone = crosshair_data.clone();
     let scale_and_offset_clone = scale_and_offset.clone();
+    let active_tool_clone = active_tool.clone();
 
     drawing_area.set_draw_func(move |_, cr, width, height| {
         // Calculate scaling to fit image while maintaining aspect ratio
@@ -356,7 +577,8 @@ fn create_drawing_area(
 
         // Draw the crosshair and coordinates if initialized
         if data.initialized {
-            draw_crosshair(cr, &data, scale);
+            let current_tool = *active_tool_clone.borrow();
+            draw_crosshair(cr, &data, scale, current_tool);
             draw_tooltip(
                 cr,
                 &data,
@@ -364,6 +586,7 @@ fn create_drawing_area(
                 &scale_and_offset_clone,
                 img_width,
                 img_height,
+                current_tool,
             );
         }
 
@@ -382,6 +605,8 @@ fn setup_event_handlers(
     rgb_image: Rc<image::RgbImage>,
     screenshot_path: PathBuf,
     scale_and_offset: Rc<RefCell<(f64, f64, f64)>>,
+    command_center: &Box,
+    active_tool: Rc<RefCell<i32>>,
 ) {
     // Set up keyboard event handling
     let window_clone_for_cleanup = window.clone();
@@ -400,6 +625,26 @@ fn setup_event_handlers(
     });
     window.add_controller(key_controller);
 
+    let command_center_clone_press = command_center.clone();
+    let key_controller_press = EventControllerKey::new();
+    key_controller_press.connect_key_pressed(move |_, key, _, _| {
+        if key == Key::Control_L || key == Key::Control_R {
+            command_center_clone_press.set_visible(true);
+            return Propagation::Stop;
+        }
+        Propagation::Proceed
+    });
+    window.add_controller(key_controller_press);
+
+    let command_center_clone_release = command_center.clone();
+    let key_controller_release = EventControllerKey::new();
+    key_controller_release.connect_key_released(move |_, key, _, _| {
+        if key == Key::Control_L || key == Key::Control_R {
+            command_center_clone_release.set_visible(false);
+        }
+    });
+    window.add_controller(key_controller_release);
+
     // Set up mouse motion event handling
     setup_mouse_events(
         window,
@@ -407,6 +652,7 @@ fn setup_event_handlers(
         crosshair_data,
         rgb_image,
         scale_and_offset,
+        active_tool,
     );
 }
 
@@ -417,10 +663,12 @@ fn setup_mouse_events(
     crosshair_data: Rc<RefCell<CrosshairData>>,
     rgb_image: Rc<image::RgbImage>,
     scale_and_offset: Rc<RefCell<(f64, f64, f64)>>,
+    active_tool: Rc<RefCell<i32>>,
 ) {
     let drawing_area_clone = drawing_area.clone();
     let crosshair_data_clone = crosshair_data.clone();
     let rgb_image_clone = rgb_image.clone();
+    let active_tool_clone = active_tool.clone();
 
     let update_crosshair = move |x: f64, y: f64| {
         let (scale, offset_x, offset_y) = *scale_and_offset.borrow();
@@ -435,15 +683,16 @@ fn setup_mouse_events(
             mouse_x = img_width - 1
         }
         if mouse_y >= img_height {
-            mouse_y = img_height -1;
+            mouse_y = img_height - 1;
         }
 
         if screenshot::validate_coordinates(&rgb_image_clone, mouse_x, mouse_y).is_err() {
             return;
         }
 
+        let current_tool = *active_tool_clone.borrow();
         let (top, bottom, left, right) =
-            screenshot::calculate_line_limits(&rgb_image_clone, mouse_x, mouse_y);
+            screenshot::calculate_line_limits(&rgb_image_clone, mouse_x, mouse_y, current_tool);
 
         // Update crosshair data with new position and limits
         {

@@ -1,4 +1,4 @@
-use image::{RgbImage};
+use image::RgbImage;
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
@@ -60,13 +60,27 @@ pub fn validate_coordinates(img: &RgbImage, x: u32, y: u32) -> Result<(u32, u32)
 
 /// Calculates the line limits for the crosshair based on color changes
 /// Extends lines in all 4 directions until a significant color change is detected
-pub fn calculate_line_limits(img: &RgbImage, x: u32, y: u32) -> (u32, u32, u32, u32) {
+pub fn calculate_line_limits(
+    img: &RgbImage,
+    x: u32,
+    y: u32,
+    active_tool: i32,
+) -> (u32, u32, u32, u32) {
     let (width, height) = img.dimensions();
 
-    let top_limit = calculate_limit(img, x, y, 0, true);
-    let bottom_limit = calculate_limit(img, x, y, height - 1, true);
-    let left_limit = calculate_limit(img, x, y, 0, false);
-    let right_limit = calculate_limit(img, x, y, width - 1, false);
+    let mut top_limit: u32 = y;
+    let mut bottom_limit: u32 = y;
+    let mut left_limit: u32 = x;
+    let mut right_limit: u32 = x;
+
+    if active_tool == 0 || active_tool == 2 {
+        top_limit = calculate_limit(img, x, y, 0, true);
+        bottom_limit = calculate_limit(img, x, y, height - 1, true);
+    }
+    if active_tool == 0 || active_tool == 1 {
+        left_limit = calculate_limit(img, x, y, 0, false);
+        right_limit = calculate_limit(img, x, y, width - 1, false);
+    }
 
     (top_limit, bottom_limit, left_limit, right_limit)
 }
@@ -78,9 +92,9 @@ fn calculate_limit(img: &RgbImage, x: u32, y: u32, end: u32, vertical: bool) -> 
     let fixed = if vertical { x } else { y };
 
     let mut last_pixel = if vertical {
-        img.get_pixel(fixed, start).clone()
+        *img.get_pixel(fixed, start)
     } else {
-        img.get_pixel(start, fixed).clone()
+        *img.get_pixel(start, fixed)
     };
 
     let iter: Box<dyn Iterator<Item = u32>> = if start > end {
@@ -105,7 +119,7 @@ fn calculate_limit(img: &RgbImage, x: u32, y: u32, end: u32, vertical: bool) -> 
             return pos;
         }
 
-        last_pixel = current_pixel.clone();
+        last_pixel = *current_pixel;
     }
 
     end
