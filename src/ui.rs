@@ -149,8 +149,8 @@ fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
     cr.move_to((lower_x) as f64, data.top_limit as f64);
     cr.line_to((upper_x) as f64, data.top_limit as f64);
     let _ = cr.stroke();
-    cr.move_to((lower_x) as f64, (data.top_limit - 1) as f64);
-    cr.line_to((upper_x) as f64, (data.top_limit - 1) as f64);
+    cr.move_to((lower_x) as f64, (data.top_limit + 1) as f64);
+    cr.line_to((upper_x) as f64, (data.top_limit + 1) as f64);
     let _ = cr.stroke();
 
     // Draw vertical line below the crosshair center
@@ -178,8 +178,8 @@ fn draw_crosshair(cr: &cairo::Context, data: &CrosshairData, scale: f64) {
     cr.move_to(data.left_limit as f64, (lower_y) as f64);
     cr.line_to(data.left_limit as f64, (upper_y) as f64);
     let _ = cr.stroke();
-    cr.move_to((data.left_limit - 1) as f64, (lower_y) as f64);
-    cr.line_to((data.left_limit - 1) as f64, (upper_y) as f64);
+    cr.move_to((data.left_limit + 1) as f64, (lower_y) as f64);
+    cr.line_to((data.left_limit + 1) as f64, (upper_y) as f64);
     let _ = cr.stroke();
 
     // Draw horizontal line to the right of crosshair center
