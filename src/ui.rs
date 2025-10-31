@@ -425,8 +425,18 @@ fn setup_mouse_events(
     let update_crosshair = move |x: f64, y: f64| {
         let (scale, offset_x, offset_y) = *scale_and_offset.borrow();
 
-        let mouse_x = ((x - offset_x) / scale) as u32;
-        let mouse_y = ((y - offset_y) / scale) as u32;
+        let mut mouse_x = ((x - offset_x) / scale) as u32;
+        let mut mouse_y = ((y - offset_y) / scale) as u32;
+
+        let (img_width, img_height) = rgb_image_clone.dimensions();
+
+        // Clamp coordinates to be within image bounds
+        if mouse_x >= img_width {
+            mouse_x = img_width - 1
+        }
+        if mouse_y >= img_height {
+            mouse_y = img_height -1;
+        }
 
         if screenshot::validate_coordinates(&rgb_image_clone, mouse_x, mouse_y).is_err() {
             return;
