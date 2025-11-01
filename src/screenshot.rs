@@ -65,6 +65,7 @@ pub fn calculate_line_limits(
     x: u32,
     y: u32,
     active_tool: i32,
+    magnitude_threshold: f32,
 ) -> (u32, u32, u32, u32) {
     let (width, height) = img.dimensions();
 
@@ -74,12 +75,12 @@ pub fn calculate_line_limits(
     let mut right_limit: u32 = x;
 
     if active_tool == 0 || active_tool == 2 {
-        top_limit = calculate_limit(img, x, y, 0, true);
-        bottom_limit = calculate_limit(img, x, y, height - 1, true);
+        top_limit = calculate_limit(img, x, y, 0, true, magnitude_threshold);
+        bottom_limit = calculate_limit(img, x, y, height - 1, true, magnitude_threshold);
     }
     if active_tool == 0 || active_tool == 1 {
-        left_limit = calculate_limit(img, x, y, 0, false);
-        right_limit = calculate_limit(img, x, y, width - 1, false);
+        left_limit = calculate_limit(img, x, y, 0, false, magnitude_threshold);
+        right_limit = calculate_limit(img, x, y, width - 1, false, magnitude_threshold);
     }
 
     (top_limit, bottom_limit, left_limit, right_limit)
@@ -87,7 +88,7 @@ pub fn calculate_line_limits(
 
 /// Helper function to calculate a single line limit in a specific direction
 /// Used for finding boundaries where color changes significantly
-fn calculate_limit(img: &RgbImage, x: u32, y: u32, end: u32, vertical: bool) -> u32 {
+fn calculate_limit(img: &RgbImage, x: u32, y: u32, end: u32, vertical: bool, magnitude_threshold: f32) -> u32 {
     let start = if vertical { y } else { x };
     let fixed = if vertical { x } else { y };
 
@@ -115,12 +116,14 @@ fn calculate_limit(img: &RgbImage, x: u32, y: u32, end: u32, vertical: bool) -> 
         let diff_b = (i16::from(current_pixel[2]) - i16::from(last_pixel[2])).abs() as u32;
         let magnitude = ((diff_r * diff_r + diff_g * diff_g + diff_b * diff_b) as f32).sqrt();
 
-        if magnitude > 20.0 {
+        if magnitude > magnitude_threshold {
             return pos;
         }
 
         last_pixel = *current_pixel;
     }
+
+    println!("TH: {magnitude_threshold}");
 
     end
 }
