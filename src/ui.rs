@@ -21,6 +21,7 @@ struct CrosshairData {
     left_limit: u32,
     right_limit: u32,
     initialized: bool,
+    magnitude_threshold: f32,
 }
 
 pub fn build_ui(app: &Application) {
@@ -55,6 +56,7 @@ pub fn build_ui(app: &Application) {
         left_limit: 0,
         right_limit: 0,
         initialized: false,
+        magnitude_threshold: 20.0,
     }));
 
     let scale_and_offset = Rc::new(RefCell::new((1.0_f64, 0.0_f64, 0.0_f64)));
@@ -691,8 +693,14 @@ fn setup_mouse_events(
         }
 
         let current_tool = *active_tool_clone.borrow();
-        let (top, bottom, left, right) =
-            screenshot::calculate_line_limits(&rgb_image_clone, mouse_x, mouse_y, current_tool);
+        let magnitude_threshold = crosshair_data_clone.borrow().magnitude_threshold;
+        let (top, bottom, left, right) = screenshot::calculate_line_limits(
+            &rgb_image_clone,
+            mouse_x,
+            mouse_y,
+            current_tool,
+            magnitude_threshold,
+        );
 
         // Update crosshair data with new position and limits
         {
@@ -724,6 +732,55 @@ fn setup_mouse_events(
     });
 
     window.add_controller(motion_controller);
+
+    // Set up scroll event handling for magnitude adjustment
+    let drawing_area_scroll = drawing_area.clone();
+    let crosshair_data_scroll = crosshair_data.clone();
+    let rgb_image_clone_for_scroll = rgb_image.clone();
+    let active_tool_clone_for_scroll = active_tool.clone();
+    let scroll_controller =
+        gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
+    scroll_controller.connect_scroll(move |_, _, y_scroll| {
+        // Adjust magnitude threshold based on scroll direction
+        let mut data = crosshair_data_scroll.borrow_mut();
+        let mut new_magnitude = data.magnitude_threshold;
+
+        // Scrolling down
+        if y_scroll > 0.0 {
+            let scale_factor = (new_magnitude / 20.0).max(0.5);
+            new_magnitude = (new_magnitude * (1.0 + 0.05 * scale_factor)).min(255.0);
+        // Scrolling up
+        } else if y_scroll < 0.0 {
+            let scale_factor = (new_magnitude / 20.0).max(0.5);
+            new_magnitude = (new_magnitude / (1.0 + 0.05 * scale_factor)).max(1.0);
+        }
+
+        data.magnitude_threshold = new_magnitude;
+
+        // Recalculate the limits with the new magnitude threshold using the current position
+        if data.initialized {
+            let current_tool = *active_tool_clone_for_scroll.borrow();
+            let (top, bottom, left, right) = screenshot::calculate_line_limits(
+                &rgb_image_clone_for_scroll,
+                data.x,
+                data.y,
+                current_tool,
+                new_magnitude,
+            );
+
+            // Update the limits with the new calculation
+            data.top_limit = top + 1;
+            data.bottom_limit = bottom + 1;
+            data.left_limit = left + 1;
+            data.right_limit = right + 1;
+        }
+
+        // Update the crosshair to reflect the new magnitude
+        drawing_area_scroll.queue_draw();
+        gtk4::glib::Propagation::Proceed
+    });
+
+    drawing_area.add_controller(scroll_controller);
 }
 
 /// Sets up cleanup function to run when window closes
