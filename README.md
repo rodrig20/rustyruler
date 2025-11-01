@@ -28,6 +28,8 @@ Make sure you have:
 
 Getting Rustyruler up and running is straightforward:
 
+**Method 1: Build from source**
+
 ```bash
 # Get the code
 git clone https://github.com/rodrig20/rustyruler.git
@@ -39,6 +41,21 @@ cargo build --release
 # Or just run it directly
 cargo run
 ```
+
+**Method 2: Install with PKGBUILD (Arch Linux)**
+
+If you're on Arch Linux or an Arch-based distribution, you can use the provided PKGBUILD:
+
+```bash
+# Clone the repository
+git clone https://github.com/rodrig20/rustyruler.git
+cd rustyruler
+
+# Build and install the package
+makepkg -si
+```
+
+This will build the package and install it using pacman. The PKGBUILD includes all necessary dependencies and will install the binary to `/usr/bin/rustyruler`.
 
 ## How to use it
 
